@@ -1,27 +1,14 @@
 "use server";
 
-import { openai } from "@ai-sdk/openai";
+import { google } from "@ai-sdk/google";
 import { streamObject } from "ai";
 import { z } from "zod";
 import { checkIsProUser, getCurrentUser } from "@/lib/auth/helpers";
-import {
-  buildArticleSummaries,
-  buildNewsletterPrompt,
-} from "@/lib/newsletter/prompt-builder";
+import { buildArticleSummaries, buildNewsletterPrompt } from "@/lib/newsletter/prompt-builder";
 import { prepareFeedsAndArticles } from "@/lib/rss/feed-refresh";
 import { createNewsletter } from "./newsletter";
 import { getUserSettingsByUserId } from "./user-settings";
 
-// ============================================
-// NEWSLETTER GENERATION ACTIONS
-// ============================================
-
-/**
- * Newsletter generation result schema
- *
- * Defines the structure of AI-generated newsletters.
- * The AI SDK validates responses against this schema.
- */
 const NewsletterSchema = z.object({
   suggestedTitles: z.array(z.string()).length(5),
   suggestedSubjectLines: z.array(z.string()).length(5),
@@ -30,50 +17,103 @@ const NewsletterSchema = z.object({
   additionalInfo: z.string().optional(),
 });
 
-export type GeneratedNewsletter = z.infer<typeof NewsletterSchema>;
+type GeneratedNewsletter = z.infer<typeof NewsletterSchema>;
 
-/**
- * Generates a newsletter with AI streaming
- *
- * This is the main function for newsletter generation. It:
- * 1. Authenticates the user
- * 2. Fetches user settings for customization
- * 3. Prepares feeds and retrieves articles
- * 4. Builds an AI prompt with all context
- * 5. Streams the AI-generated newsletter in real-time
- *
- * @param params - Feed IDs, date range, and optional user instructions
- * @returns Object with the stream and article count
- */
+const MAX_PROMPT_BYTES = 24000;
+const MAX_SUMMARY_CHARS = 1200;
+const MAX_ARTICLES_INITIAL = 100;
+const MAX_ARTICLES_FALLBACK = 40;
+
+function approxByteLength(s: string) {
+  return Buffer.byteLength(s || "", "utf8");
+}
+
+function ensurePromptFits({ startDate, endDate, articleSummaries, userInput, settings }: {
+  startDate: Date;
+  endDate: Date;
+  articleSummaries: string[];
+  userInput?: string;
+  settings: any;
+}) {
+  const truncated = articleSummaries.map((s) =>
+    s.length > MAX_SUMMARY_CHARS ? s.slice(0, MAX_SUMMARY_CHARS) + "…" : s
+  );
+
+  let prompt = buildNewsletterPrompt({
+    startDate,
+    endDate,
+    articleSummaries: truncated,
+    articleCount: truncated.length,
+    userInput,
+    settings,
+  });
+
+  let bytes = approxByteLength(prompt);
+
+  if (bytes > MAX_PROMPT_BYTES) {
+    let allowed = Math.min(truncated.length, MAX_ARTICLES_FALLBACK);
+    while (bytes > MAX_PROMPT_BYTES && allowed > 0) {
+      const reduced = truncated.slice(0, allowed);
+      prompt = buildNewsletterPrompt({
+        startDate,
+        endDate,
+        articleSummaries: reduced,
+        articleCount: reduced.length,
+        userInput,
+        settings,
+      });
+      bytes = approxByteLength(prompt);
+      if (bytes > MAX_PROMPT_BYTES) allowed = Math.max(1, Math.floor(allowed * 0.6));
+    }
+  }
+
+  return { prompt, bytes };
+}
+
 export async function generateNewsletterStream(params: {
   feedIds: string[];
   startDate: Date;
   endDate: Date;
   userInput?: string;
 }) {
-  // Get authenticated user from database
   const user = await getCurrentUser();
-
-  // Get user's newsletter settings (tone, branding, etc.)
   const settings = await getUserSettingsByUserId(user.id);
 
-  // Fetch and refresh articles from RSS feeds
-  const articles = await prepareFeedsAndArticles(params);
-
-  // Build the AI prompt with articles and settings
-  const articleSummaries = buildArticleSummaries(articles);
-  const prompt = buildNewsletterPrompt({
+  const articles = await prepareFeedsAndArticles({
+    feedIds: params.feedIds,
     startDate: params.startDate,
     endDate: params.endDate,
-    articleSummaries,
-    articleCount: articles.length,
+    limit: MAX_ARTICLES_INITIAL,
+  });
+
+  let articleSummaries: unknown = buildArticleSummaries(articles);
+
+  try {
+    if (typeof articleSummaries === "string") {
+      articleSummaries = [articleSummaries];
+    } else if (Array.isArray(articleSummaries)) {
+      articleSummaries = articleSummaries.map((s) => String(s ?? ""));
+    } else if (articleSummaries && typeof articleSummaries === "object") {
+      const vals = Object.values(articleSummaries as Record<string, unknown>);
+      articleSummaries = vals.map((v) => String(v ?? ""));
+    } else {
+      articleSummaries = [];
+    }
+  } catch {
+    articleSummaries = [];
+  }
+
+  const summariesArray = (articleSummaries as string[]).slice(0, Math.max(0, articleSummaries ? (articleSummaries as string[]).length : 0));
+  const { prompt, bytes } = ensurePromptFits({
+    startDate: params.startDate,
+    endDate: params.endDate,
+    articleSummaries: summariesArray,
     userInput: params.userInput,
     settings,
   });
 
-  // Generate newsletter using AI with streaming for real-time updates
   const { partialObjectStream } = await streamObject({
-    model: openai("gpt-4o"),
+    model: google("gemini-2.5-flash"),
     schema: NewsletterSchema,
     prompt,
   });
@@ -84,16 +124,6 @@ export async function generateNewsletterStream(params: {
   };
 }
 
-/**
- * Saves a generated newsletter to the database
- *
- * Only Pro users can save newsletters to their history.
- * This allows them to reference past newsletters and track their content.
- *
- * @param params - Newsletter data and generation parameters
- * @returns Saved newsletter record
- * @throws Error if user is not Pro or not authenticated
- */
 export async function saveGeneratedNewsletter(params: {
   newsletter: GeneratedNewsletter;
   feedIds: string[];
@@ -101,16 +131,9 @@ export async function saveGeneratedNewsletter(params: {
   endDate: Date;
   userInput?: string;
 }) {
-  // Check if user has Pro plan (required for saving)
   const isPro = await checkIsProUser();
-  if (!isPro) {
-    throw new Error("Pro plan required to save newsletters");
-  }
-
-  // Get authenticated user
+  if (!isPro) throw new Error("Pro plan required to save newsletters");
   const user = await getCurrentUser();
-
-  // Save newsletter to database
   const savedNewsletter = await createNewsletter({
     userId: user.id,
     suggestedTitles: params.newsletter.suggestedTitles,
@@ -123,6 +146,5 @@ export async function saveGeneratedNewsletter(params: {
     userInput: params.userInput,
     feedsUsed: params.feedIds,
   });
-
   return savedNewsletter;
 }

@@ -50,7 +50,6 @@ export function NewsletterGenerationPage() {
   const searchParams = useSearchParams();
   const hasStartedRef = React.useRef(false);
   const [articlesCount, setArticlesCount] = React.useState(0);
-  const [isPreparing, setIsPreparing] = React.useState(true);
 
   // Parse generation parameters from URL query string
   const feedIds = searchParams.get("feedIds");
@@ -97,8 +96,6 @@ export function NewsletterGenerationPage() {
 
     const startGeneration = async () => {
       try {
-        setIsPreparing(true);
-        
         // Get metadata for toast notifications
         const response = await fetch("/api/newsletter/prepare", {
           method: "POST",
@@ -125,16 +122,11 @@ export function NewsletterGenerationPage() {
           }
         }
 
-        // Small delay to show the "Preparing" card
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
         // Start AI generation
-        setIsPreparing(false);
         submit(params);
       } catch (error) {
         console.error("Failed to prepare newsletter:", error);
         // Start generation anyway
-        setIsPreparing(false);
         submit(params);
       }
     };
@@ -200,7 +192,7 @@ export function NewsletterGenerationPage() {
   // If no params, show error
   if (!params) {
     return (
-      <div className="min-h-screen bg-linear-to-b from-white to-gray-50 dark:from-black dark:to-gray-950">
+      <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 dark:from-black dark:to-gray-950">
         <div className="container mx-auto py-12 px-6 lg:px-8">
           <Card className="transition-all hover:shadow-lg">
             <CardHeader>
@@ -214,7 +206,7 @@ export function NewsletterGenerationPage() {
             <CardContent>
               <Button
                 onClick={handleBackToDashboard}
-                className="bg-linear-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
+                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
               >
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back to Dashboard
@@ -227,7 +219,7 @@ export function NewsletterGenerationPage() {
   }
 
   return (
-    <div className="min-h-screen bg-linear-to-b from-white to-gray-50 dark:from-black dark:to-gray-950">
+    <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 dark:from-black dark:to-gray-950">
       <div className="container mx-auto py-12 px-6 lg:px-8 space-y-8">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -236,7 +228,7 @@ export function NewsletterGenerationPage() {
               variant="ghost"
               size="sm"
               onClick={handleBackToDashboard}
-              disabled={isLoading || isPreparing}
+              disabled={isLoading}
               className="hover:bg-accent"
             >
               <ArrowLeft className="h-4 w-4 mr-2" />
@@ -249,20 +241,36 @@ export function NewsletterGenerationPage() {
               </h1>
             </div>
           </div>
-          {(isLoading || isPreparing) && (
+          {isLoading && (
             <div className="flex items-center gap-2 text-base">
-              <div className="inline-flex size-8 items-center justify-center rounded-md bg-linear-to-br from-blue-600 to-purple-600 text-white animate-pulse">
+              <div className="inline-flex size-8 items-center justify-center rounded-md bg-gradient-to-br from-blue-600 to-purple-600 text-white animate-pulse">
                 <Sparkles className="h-4 w-4" />
               </div>
-              <span className="font-medium">
-                {isPreparing ? "Preparing..." : "Generating newsletter..."}
-              </span>
+              <span className="font-medium">Generating newsletter...</span>
             </div>
           )}
         </div>
 
-        {/* Show preparing card */}
-        {isPreparing && (
+        {/* Show loading card while generating */}
+        {isLoading && !newsletter?.body && (
+          <div className="transition-opacity duration-300 ease-in-out">
+            <NewsletterLoadingCard />
+          </div>
+        )}
+
+        {/* Newsletter display with smooth transition */}
+        {newsletter?.body && (
+          <div className="transition-opacity duration-500 ease-in-out animate-in fade-in">
+            <NewsletterDisplay
+              newsletter={newsletter}
+              onSave={handleSave}
+              isGenerating={isLoading}
+            />
+          </div>
+        )}
+
+        {/* If generation hasn't started yet */}
+        {!isLoading && !newsletter?.body && (
           <Card className="transition-all hover:shadow-lg">
             <CardHeader>
               <CardTitle className="text-2xl">Preparing to Generate</CardTitle>
@@ -271,24 +279,6 @@ export function NewsletterGenerationPage() {
               </CardDescription>
             </CardHeader>
           </Card>
-        )}
-
-        {/* Show loading card while generating */}
-        {isLoading && !isPreparing && (
-          <div className="transition-opacity duration-300 ease-in-out">
-            <NewsletterLoadingCard />
-          </div>
-        )}
-
-        {/* Newsletter display with smooth transition - show immediately when generation starts */}
-        {!isPreparing && (isLoading || newsletter?.body) && (
-          <div className="transition-opacity duration-500 ease-in-out animate-in fade-in">
-            <NewsletterDisplay
-              newsletter={newsletter || {}}
-              onSave={handleSave}
-              isGenerating={isLoading}
-            />
-          </div>
         )}
       </div>
     </div>

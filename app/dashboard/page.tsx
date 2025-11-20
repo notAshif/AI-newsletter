@@ -1,11 +1,11 @@
 import { Sparkles } from "lucide-react";
-import { NewsletterGenerator } from "@/components/dashboard/newsletter-generator";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { NewsletterGenerator } from "@/components/dashboard/newsletter-generator";
 import { RssFeedManager } from "@/components/dashboard/rss-feed-manager";
 
 async function Dashboard() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 dark:from-black dark:to-gray-950">
+    <div className="min-h-screen bg-linear-to-b from-white to-gray-50 dark:from-black dark:to-gray-950">
       <div className="container mx-auto py-12 px-6 lg:px-8 space-y-12">
         {/* Page Header */}
         <PageHeader

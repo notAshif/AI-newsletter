@@ -151,7 +151,7 @@ export function NewsletterForm({ feeds }: NewsletterFormProps) {
           <Button
             onClick={handleGenerate}
             disabled={selectedFeeds.length === 0}
-            className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
+            className="w-full bg-linear-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
             size="lg"
           >
             <Sparkles className="h-4 w-4 mr-2" />
